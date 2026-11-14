@@ -5,6 +5,7 @@ const $ = id => document.getElementById(id);
 
 let cfg = null, me = { entityId: null, alive: false, tasks: [], cooldownUntil: 0 };
 let round = { phase: 'playing', endsAt: 0, reveal: [] };
+let strikesPending = [];   // [x, y, secondsLeft] from server
 let snaps = [];             // [{recv, map: Map(id -> [x,y])}]
 let effects = [];
 let hoverId = null, mouse = { x: -9999, y: -9999 }, scale = 1;
@@ -56,7 +57,11 @@ socket.on('s', s => {
   clockSkew = s.t / 1000 - Date.now() / 1000;
   snaps.push({ recv: performance.now(), map: new Map(s.e.map(([id, x, y]) => [id, [x, y]])) });
   if (snaps.length > 10) snaps.shift();
-  for (const ev of s.ev) if (ev.type === 'caught') effects.push({ ...ev, until: performance.now() + 3000 });
+  strikesPending = s.st || [];
+  for (const ev of s.ev) {
+    if (ev.type === 'caught') effects.push({ ...ev, until: performance.now() + 3000 });
+    if (ev.type === 'boom') effects.push({ ...ev, start: performance.now(), until: performance.now() + 900 });
+  }
   $('scores').innerHTML = s.sb.map(p => `<div class="${p.alive ? '' : 'dead'}">${esc(p.name)} : ${p.score}</div>`).join('');
 });
 
@@ -90,7 +95,7 @@ function sendInput() {
   // Keys are screen-relative; convert to world axes (screen right = world +x -y, screen down = world +x +y).
   const sx = (keys.has('d') || keys.has('arrowright')) - (keys.has('a') || keys.has('arrowleft'));
   const sy = (keys.has('s') || keys.has('arrowdown')) - (keys.has('w') || keys.has('arrowup'));
-  const inp = { dx: Math.sign(sx + sy), dy: Math.sign(sy - sx), slow: keys.has('shift') };
+  const inp = { dx: Math.sign(sx + sy), dy: Math.sign(sy - sx), slow: keys.has('c') };
   const k = JSON.stringify(inp);
   if (k !== lastSent) { lastSent = k; socket.emit('input', inp); }
 }
@@ -98,6 +103,8 @@ addEventListener('keydown', e => {
   if ($('join').style.display !== 'none') return;
   const k = e.key.toLowerCase();
   if (k === ' ') { e.preventDefault(); tryTag(); return; }
+  if (k === 'shift') { if (!e.repeat) tryDash(); return; }
+  if (k === 'r') { if (!e.repeat) tryStrike(); return; }
   if (k.startsWith('arrow')) e.preventDefault();
   keys.add(k); sendInput();
 });
@@ -115,6 +122,19 @@ cv.addEventListener('mousedown', e => {
 });
 cv.addEventListener('contextmenu', e => e.preventDefault());
 
+function serverNow() { return Date.now() / 1000 + clockSkew; }
+function tryDash() {
+  if (!me.alive || serverNow() < me.dashReadyAt) return;
+  socket.emit('dash');
+}
+function tryStrike() {
+  if (!me.alive || !cfg || mouse.x < 0) return;
+  if (serverNow() < me.strikeReadyAt) { toast('Airstrike is on cooldown.'); return; }
+  if (me.score < cfg.strike.cost) { toast(`An airstrike costs ${cfg.strike.cost} points.`); return; }
+  const w = unproj(mouse.x, mouse.y);
+  socket.emit('strike', { x: Math.max(0, Math.min(cfg.W, w.x)), y: Math.max(0, Math.min(cfg.H, w.y)) });
+}
+
 function tryTag() {
   if (!hoverId || hoverId === me.entityId) return;
   if (Date.now() / 1000 + clockSkew < me.cooldownUntil) { toast('Tagging is locked - wait for the cooldown.'); return; }
@@ -122,6 +142,13 @@ function tryTag() {
 }
 
 // ---------- Rendering ----------
+// Speed from the last 5 server snapshots (server ticks are exactly 50ms apart).
+function snapSpeed(id) {
+  if (snaps.length < 5) return 0;
+  const p1 = snaps[snaps.length - 1].map.get(id), p0 = snaps[snaps.length - 5].map.get(id);
+  return p1 && p0 ? Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) / 0.2 : 0;
+}
+
 function interpolated() {
   if (snaps.length === 0) return new Map();
   const rt = performance.now() - INTERP_MS;
@@ -139,6 +166,8 @@ function interpolated() {
 }
 
 const anim = new Map();   // id -> {x, y, face, dist, movedAt}
+
+function bar(frac, n = 10) { const k = Math.round(Math.max(0, Math.min(1, frac)) * n); return '[' + '#'.repeat(k) + '-'.repeat(n - k) + ']'; }
 
 function text(str, x, y, color) { ctx.fillStyle = color; ctx.fillText(str, x, y); }
 
@@ -189,6 +218,13 @@ function draw() {
   }
   // tag range
   if (mine) ring(mine[0], mine[1], cfg.tagRange, 40, '.', DIM);
+
+  // pending airstrikes: everyone sees where, nobody sees who called it
+  for (const [x, y, left] of strikesPending) {
+    const urgent = left < 1 && Math.floor(t / 120) % 2;
+    ring(x, y, cfg.strike.radius, 28, 'x', urgent ? '#ffffff' : RED, t / 700);
+    ring(x, y, cfg.strike.radius * Math.max(0.05, left / cfg.strike.delay), 12, '.', RED);
+  }
 
   // click markers (on the floor)
   effects = effects.filter(e => e.until > t);
@@ -241,19 +277,50 @@ function draw() {
         color = inRange ? RED : '#ffffff';
         text('[', sx - CW * 2.2, sy - LH, color); text(']', sx + CW * 2.2, sy - LH, color);
       }
+      if (snapSpeed(th.id) > 120) {                     // dashing (or a hurried doppel) kicks up dust
+        const back = th.a.face === 'r' ? -1 : 1;
+        text('~', sx + back * CW * 2, sy - 2, DIM); text('~', sx + back * CW * 3, sy - LH * 0.4, '#555');
+      }
       block(SPRITES[th.a.face][frame], sx, sy, color);
+      if (th.id === me.entityId && round.phase === 'playing') {
+        const now = serverNow();
+        const ready = now >= me.dashReadyAt;
+        const frac = now < me.dashUntil ? 1 : ready ? 1 : 1 - (me.dashReadyAt - now) / cfg.dash.cooldown;
+        ctx.font = `bold ${FS * 0.7}px "Courier New", monospace`;
+        text(now < me.dashUntil ? '>>>>>' : bar(frac, 5), sx, sy + LH * 0.75, ready || now < me.dashUntil ? YOU : DIM);
+        ctx.font = FONT;
+      }
       if (th.id === me.entityId) text('v', sx, sy - 3 * LH - 2, YOU);
       if (reveal && reveal.has(th.id)) text(reveal.get(th.id), sx, sy - 3 * LH - (th.id === me.entityId ? LH : 0) - 2, GREEN);
     }
+  }
+  for (const [x, y, left] of strikesPending) {
+    const [sx, sy] = proj(x, y);
+    block(['!! ' + left.toFixed(1) + ' !!'], sx, sy - 3 * LH, RED);
+  }
+  for (const e of effects) if (e.type === 'boom') {
+    const k = (t - e.start) / 900;
+    ring(e.x, e.y, e.r * (0.3 + k), 22, k < 0.5 ? '#' : '*', k < 0.5 ? '#fb923c' : '#9ca3af', k * 3);
+    ring(e.x, e.y, e.r * (0.1 + k * 0.6), 12, '@', '#fde047', -k * 2);
+    const [sx, sy] = proj(e.x, e.y);
+    if (k < 0.6) block(['BOOM'], sx, sy - LH, '#fde047');
   }
   for (const l of labels) block(...l);   // station names always stay readable on top
 
   // status + banner
   const left = Math.max(0, Math.ceil(round.endsAt - (Date.now() / 1000 + clockSkew)));
   const cd = Math.max(0, Math.ceil(me.cooldownUntil - (Date.now() / 1000 + clockSkew)));
-  $('status').textContent = round.phase === 'playing'
+  let status = round.phase === 'playing'
     ? `[${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}]` + (cd ? ` tag locked ${cd}s` : '') + (me.alive ? '' : ' spectating')
     : `Next round in ${left}s`;
+  if (me.alive && round.phase === 'playing') {
+    const now = serverNow();
+    const dLeft = Math.max(0, me.dashReadyAt - now), sLeft = Math.max(0, me.strikeReadyAt - now);
+    status += `\nDASH   (Shift) ${bar(1 - dLeft / cfg.dash.cooldown)} ${dLeft ? Math.ceil(dLeft) + 's' : 'READY'}`;
+    const canPay = me.score >= cfg.strike.cost;
+    status += `\nSTRIKE (R)     ${bar(1 - sLeft / cfg.strike.cooldown)} ${sLeft ? Math.ceil(sLeft) + 's' : canPay ? 'READY' : 'need ' + cfg.strike.cost + ' pts'}`;
+  }
+  if ($('status').textContent !== status) $('status').textContent = status;
   $('banner').textContent = round.phase === 'intermission' ? (round.reason || 'Round over') : '';
 }
 requestAnimationFrame(draw);

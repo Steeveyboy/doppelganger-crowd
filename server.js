@@ -26,6 +26,22 @@ const INTERMISSION_SECONDS = 10;
 const TASK_DWELL = 1.2;        // seconds standing at a station
 const TASKS_PER_SET = 3;
 
+// Dash (Shift): short burst of speed. NPCs never dash, but they do occasionally hurry,
+// so a quick figure is suspicious rather than proof.
+const DASH_SPEED = 1.9;        // x MAX_SPEED
+const DASH_SECONDS = 0.9;
+const DASH_COOLDOWN = 8;
+const NPC_HURRY_CHANCE = 0.08; // chance an NPC hurries (1.35x) on a given walk
+
+// Airstrike (R): pay points, mark a spot anywhere; it lands after a warning everyone can see.
+const STRIKE_COST = 3;         // points spent up front (need at least this many)
+const STRIKE_COOLDOWN = 40;    // seconds between your strikes
+const STRIKE_DELAY = 2.5;      // warning time before impact
+const STRIKE_RADIUS = 75;
+const STRIKE_HUMAN_REWARD = 5; // per human caught
+const STRIKE_NPC_PENALTY = 1;  // per doppel caught (doppels are removed, then wander back in)
+const NPC_RESPAWN_SECONDS = 6;
+
 const STATIONS = [
   { name: 'Coffee',    x: 180, y: 180, color: '#d19a66' },
   { name: 'Fountain',  x: 500, y: 500, color: '#61afef' },
@@ -43,6 +59,8 @@ const players = new Map();       // socket.id -> player record
 let phase = 'playing';           // 'playing' | 'intermission'
 let phaseEndsAt = 0;
 let events = [];                 // transient public events (e.g. successful tags)
+let strikes = [];                // pending airstrikes {x, y, at, owner}
+let respawns = [];               // times at which a destroyed doppel walks back in
 
 const rid = () => crypto.randomBytes(4).toString('hex');
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -67,7 +85,7 @@ function pickNpcGoal(e) {
     e.tx = rand(40, W - 40);
     e.ty = rand(40, H - 40);
   }
-  e.speedFactor = rand(0.55, 1.0);
+  e.speedFactor = Math.random() < NPC_HURRY_CHANCE ? 1.35 : rand(0.55, 1.0);
 }
 
 function newTasks() {
@@ -88,6 +106,8 @@ function attachPlayer(p) {
   p.tasks = newTasks();
   p.dwell = 0;
   p.cooldownUntil = 0;
+  p.dashUntil = 0; p.dashReadyAt = 0;
+  p.strikeReadyAt = 0;
   p.input = { dx: 0, dy: 0, slow: false, mx: null, my: null };
 }
 
@@ -99,7 +119,7 @@ function startRound() {
   for (const p of players.values()) attachPlayer(p);
   phase = 'playing';
   phaseEndsAt = now() + ROUND_SECONDS;
-  events = [];
+  events = []; strikes = []; respawns = [];
   io.emit('round', { phase, endsAt: phaseEndsAt });
   for (const p of players.values()) sendPrivate(p);
 }
@@ -118,6 +138,8 @@ function sendPrivate(p) {
     alive: p.alive,
     tasks: p.tasks.map(i => STATIONS[i].name),
     cooldownUntil: p.cooldownUntil,
+    dashUntil: p.dashUntil, dashReadyAt: p.dashReadyAt,
+    strikeReadyAt: p.strikeReadyAt, score: p.score,
   });
 }
 
@@ -128,10 +150,10 @@ function scoreboard() {
 }
 
 // ---------- Simulation ----------
-function steer(e, dvx, dvy) {
+function steer(e, dvx, dvy, accel = ACCEL) {
   // Accelerate current velocity toward desired velocity with a capped acceleration (same for all bodies).
   let ax = dvx - e.vx, ay = dvy - e.vy;
-  const am = Math.hypot(ax, ay), maxDv = ACCEL * DT;
+  const am = Math.hypot(ax, ay), maxDv = accel * DT;
   if (am > maxDv) { ax *= maxDv / am; ay *= maxDv / am; }
   e.vx += ax; e.vy += ay;
 }
@@ -156,10 +178,12 @@ function tick() {
         if (Math.hypot(dx, dy) < 6) { dx = dy = 0; inp.mx = inp.my = null; }
       }
       const m = Math.hypot(dx, dy);
+      const dashing = t < p.dashUntil;
       if (m > 0) {
-        const sp = MAX_SPEED * (inp.slow ? 0.6 : 1);
+        const sp = MAX_SPEED * (dashing ? DASH_SPEED : inp.slow ? 0.6 : 1);
         dvx = dx / m * sp; dvy = dy / m * sp;
       }
+      if (dashing) { steer(e, dvx, dvy, ACCEL * 3); continue; }
     } else if (!e.owner) {
       if (e.wait > 0) { e.wait -= DT; }
       else {
@@ -213,12 +237,73 @@ function tick() {
     }
   }
 
+  // Airstrikes + doppel respawns
+  for (const st of strikes.filter(st => t >= st.at)) detonate(st);
+  strikes = strikes.filter(st => t < st.at);
+  while (respawns.length && respawns[0] <= t) {
+    respawns.shift();
+    const e = makeEntity();                       // walks in from a random edge
+    if (Math.random() < 0.5) e.x = Math.random() < 0.5 ? RADIUS : W - RADIUS;
+    else e.y = Math.random() < 0.5 ? RADIUS : H - RADIUS;
+    pickNpcGoal(e); e.wait = 0; entities.push(e);
+  }
+
   // Shuffle order every tick so array position leaks nothing.
   const snap = entities
     .map(e => [e.id, Math.round(e.x), Math.round(e.y)])
     .sort(() => Math.random() - 0.5);
-  io.emit('s', { t: Date.now(), e: snap, ev: events, sb: scoreboard() });
+  const pend = strikes.map(st => [Math.round(st.x), Math.round(st.y), +(st.at - t).toFixed(2)]);
+  io.emit('s', { t: Date.now(), e: snap, ev: events, sb: scoreboard(), st: pend });
   events = [];
+}
+
+function eliminate(victim, killer, how) {
+  const body = entities.find(e => e.id === victim.entityId);
+  victim.alive = false;
+  if (body) {
+    entities = entities.filter(e => e !== body);
+    events.push({ type: 'caught', x: body.x, y: body.y, name: victim.name });
+  }
+  io.emit('msg', killer === victim ? `${victim.name} was caught in their own airstrike!`
+    : `${killer.name} unmasked ${victim.name}${how === 'strike' ? ' with an airstrike' : ''}!`);
+  sendPrivate(victim);
+  io.to(victim.sid).emit('msg', killer === victim ? 'You airstruck yourself. Spectating until next round.'
+    : `You were unmasked by ${killer.name}. Spectating until next round.`);
+}
+
+function checkLastStanding() {
+  if (phase !== 'playing') return;
+  const alive = [...players.values()].filter(q => q.alive);
+  if (players.size > 1 && alive.length <= 1) {
+    if (alive[0]) alive[0].score += 3;
+    endRound(alive[0] ? `${alive[0].name} is the last human standing!` : 'Everyone was unmasked!');
+  }
+}
+
+function detonate(st) {
+  if (phase !== 'playing') return;
+  const owner = players.get(st.owner);          // may have left; strike still lands
+  const hit = entities.filter(e => Math.hypot(e.x - st.x, e.y - st.y) <= STRIKE_RADIUS);
+  let humans = 0, doppels = 0;
+  for (const e of hit) {
+    const victim = e.owner && players.get(e.owner);
+    if (victim && victim.alive) {
+      if (owner && victim !== owner) { owner.score += STRIKE_HUMAN_REWARD; humans++; }
+      eliminate(victim, owner || victim, 'strike');
+    } else if (!e.owner) {
+      entities = entities.filter(x => x !== e);
+      respawns.push(now() + NPC_RESPAWN_SECONDS);
+      doppels++;
+    }
+  }
+  if (owner) owner.score -= doppels * STRIKE_NPC_PENALTY;
+  events.push({ type: 'boom', x: st.x, y: st.y, r: STRIKE_RADIUS });
+  if (owner) {
+    io.to(owner.sid).emit('msg', `Airstrike: ${humans} human${humans === 1 ? '' : 's'} (+${humans * STRIKE_HUMAN_REWARD}), ` +
+      `${doppels} doppel${doppels === 1 ? '' : 's'} (-${doppels * STRIKE_NPC_PENALTY}).`);
+    sendPrivate(owner);
+  }
+  checkLastStanding();
 }
 
 // ---------- Networking ----------
@@ -229,7 +314,9 @@ io.on('connection', socket => {
     const p = { sid: socket.id, name, score: 0, alive: false, tasks: [], input: {} };
     players.set(socket.id, p);
     if (phase === 'playing') attachPlayer(p);
-    socket.emit('init', { W, H, stations: STATIONS, stationR: STATION_R, radius: RADIUS, tagRange: TAG_RANGE });
+    socket.emit('init', { W, H, stations: STATIONS, stationR: STATION_R, radius: RADIUS, tagRange: TAG_RANGE,
+      strike: { cost: STRIKE_COST, cooldown: STRIKE_COOLDOWN, radius: STRIKE_RADIUS, delay: STRIKE_DELAY },
+      dash: { seconds: DASH_SECONDS, cooldown: DASH_COOLDOWN } });
     socket.emit('round', { phase, endsAt: phaseEndsAt });
     sendPrivate(p);
   });
@@ -260,22 +347,36 @@ io.on('connection', socket => {
     const victim = target.owner && players.get(target.owner);
     if (victim && victim.alive) {
       p.score += 5;
-      victim.alive = false;
-      entities = entities.filter(e => e !== target);
-      events.push({ type: 'caught', x: target.x, y: target.y, name: victim.name });
-      io.emit('msg', `${p.name} unmasked ${victim.name}!`);
-      sendPrivate(victim);
-      io.to(victim.sid).emit('msg', `You were unmasked by ${p.name}. Spectating until next round.`);
-      const alive = [...players.values()].filter(q => q.alive);
-      if (players.size > 1 && alive.length <= 1) {
-        if (alive[0]) alive[0].score += 3;
-        endRound(alive[0] ? `${alive[0].name} is the last human standing!` : 'Everyone was unmasked!');
-      }
+      eliminate(victim, p, 'tag');
+      checkLastStanding();
     } else {
       p.score -= 1;
       p.cooldownUntil = t + WRONG_TAG_COOLDOWN;
       socket.emit('msg', `Just a doppel. -1 point, tagging locked for ${WRONG_TAG_COOLDOWN}s.`);
     }
+    sendPrivate(p);
+  });
+
+  socket.on('dash', () => {
+    const p = players.get(socket.id);
+    if (!p || !p.alive || phase !== 'playing') return;
+    const t = now();
+    if (t < p.dashReadyAt) return;
+    p.dashUntil = t + DASH_SECONDS;
+    p.dashReadyAt = t + DASH_COOLDOWN;
+    sendPrivate(p);
+  });
+
+  socket.on('strike', m => {
+    const p = players.get(socket.id);
+    if (!p || !p.alive || phase !== 'playing' || !m) return;
+    const t = now();
+    if (t < p.strikeReadyAt) return socket.emit('msg', 'Airstrike still on cooldown.');
+    if (p.score < STRIKE_COST) return socket.emit('msg', `An airstrike costs ${STRIKE_COST} points. Do some tasks first.`);
+    p.score -= STRIKE_COST;
+    p.strikeReadyAt = t + STRIKE_COOLDOWN;
+    strikes.push({ x: clamp(Number(m.x) || 0, 0, W), y: clamp(Number(m.y) || 0, 0, H), at: t + STRIKE_DELAY, owner: p.sid });
+    io.emit('msg', 'INCOMING AIRSTRIKE!');
     sendPrivate(p);
   });
 

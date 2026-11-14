@@ -26,7 +26,7 @@
 </head>
 <body>
 <canvas id="game"></canvas>
-<div id="hud"><h3>Your tasks</h3><div id="tasks"></div><div id="status" style="margin-top:6px"></div></div>
+<div id="hud"><h3>Your tasks</h3><div id="tasks"></div><div id="status" style="margin-top:6px;white-space:pre"></div></div>
 <div id="board"><h3 style="margin:0 0 6px;font-size:13px;color:var(--accent)">Scores</h3><div id="scores"></div></div>
 <div id="banner"></div>
 <div id="toast"></div>
@@ -34,7 +34,9 @@
   <form id="joinForm">
     <h1>Doppelganger Crowd</h1>
     <p>You are one face in a crowd of identical doppels. Do your errands. Act natural. Find the other humans by how they move.</p>
-    <p><b>Move:</b> WASD / arrows (relative to the screen), or left-click a spot to walk there. <b>Shift</b> = stroll.<br>
+    <p><b>Move:</b> WASD / arrows (relative to the screen), or left-click a spot to walk there. <b>C</b> (hold) = stroll.<br>
+       <b>Dash:</b> <b>Shift</b> — quick burst, 8s cooldown. Doppels rarely move that fast, so it can give you away.<br>
+       <b>Airstrike:</b> aim with the mouse, press <b>R</b>. Costs 3 points, 40s cooldown. Everyone sees the warning for 2.5s before it lands: +5 per human hit, −1 per doppel hit.<br>
        <b>Tag:</b> hover a figure and press <b>Space</b> or right-click (must be close).<br>
        Task +1 · full set +2 · catch a human +5 · wrong tag −1 and a 6s lockout.</p>
     <input id="name" maxlength="16" placeholder="Your name" autofocus required>
