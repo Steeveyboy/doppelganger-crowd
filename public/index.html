@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Doppelganger Crowd</title>
+<style>
+  :root { --bg:#0f1115; --panel:#1a1d24; --text:#e8e8ea; --muted:#9aa0aa; --accent:#facc15; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font:14px system-ui, sans-serif; overflow:hidden; }
+  #game { display:block; margin:0 auto; background:#d9d4c7; cursor:crosshair; }
+  #hud { position:fixed; top:8px; left:8px; background:rgba(26,29,36,.88); padding:10px 12px; border-radius:8px; min-width:200px; pointer-events:none; }
+  #hud h3 { margin:0 0 6px; font-size:13px; color:var(--accent); }
+  #hud .task { color:var(--muted); } #hud .task.next { color:var(--text); font-weight:600; }
+  #board { position:fixed; top:8px; right:8px; background:rgba(26,29,36,.88); padding:10px 12px; border-radius:8px; min-width:160px; pointer-events:none; }
+  #board .dead { color:var(--muted); text-decoration:line-through; }
+  #toast { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); background:rgba(26,29,36,.95); padding:8px 14px; border-radius:8px; opacity:0; transition:opacity .3s; pointer-events:none; }
+  #banner { position:fixed; top:40%; left:50%; transform:translate(-50%,-50%); font-size:28px; font-weight:700; text-align:center; text-shadow:0 2px 8px #000; pointer-events:none; }
+  #join { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.75); }
+  #join form { background:var(--panel); padding:24px; border-radius:12px; width:min(420px, calc(100% - 32px)); }
+  #join h1 { margin:0 0 8px; font-size:24px; }
+  #join p { color:var(--muted); line-height:1.45; margin:6px 0; }
+  #join input, #join button { width:100%; padding:10px; font-size:16px; border-radius:6px; border:1px solid #333; margin-top:8px; }
+  #join button { background:var(--accent); color:#111; font-weight:700; border:none; cursor:pointer; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud"><h3>Your tasks</h3><div id="tasks"></div><div id="status" style="margin-top:6px"></div></div>
+<div id="board"><h3 style="margin:0 0 6px;font-size:13px;color:var(--accent)">Scores</h3><div id="scores"></div></div>
+<div id="banner"></div>
+<div id="toast"></div>
+<div id="join">
+  <form id="joinForm">
+    <h1>Doppelganger Crowd</h1>
+    <p>You are one face in a crowd of identical doppels. Do your errands. Act natural. Find the other humans by how they move.</p>
+    <p><b>Move:</b> WASD / arrows, or left-click a spot to walk there. <b>Shift</b> = stroll.<br>
+       <b>Tag:</b> hover a figure and press <b>Space</b> or right-click (must be close).<br>
+       Task +1 · full set +2 · catch a human +5 · wrong tag −1 and a 6s lockout.</p>
+    <input id="name" maxlength="16" placeholder="Your name" autofocus required>
+    <button>Join the crowd</button>
+  </form>
+</div>
+<script src="/socket.io/socket.io.js"></script>
+<script src="client.js"></script>
+</body>
+</html>
