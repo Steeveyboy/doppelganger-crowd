@@ -5,10 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Doppelganger Crowd</title>
 <style>
-  :root { --bg:#0f1115; --panel:#1a1d24; --text:#e8e8ea; --muted:#9aa0aa; --accent:#facc15; }
+  :root { --bg:#0a0a0a; --panel:#1a1d24; --text:#e8e8ea; --muted:#9aa0aa; --accent:#facc15; }
   * { box-sizing: border-box; }
-  html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font:14px system-ui, sans-serif; overflow:hidden; }
-  #game { display:block; margin:0 auto; background:#d9d4c7; cursor:crosshair; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font:14px 'Courier New', ui-monospace, monospace; overflow:hidden; }
+  #game { display:block; margin:0 auto; background:#0a0a0a; cursor:crosshair; }
   #hud { position:fixed; top:8px; left:8px; background:rgba(26,29,36,.88); padding:10px 12px; border-radius:8px; min-width:200px; pointer-events:none; }
   #hud h3 { margin:0 0 6px; font-size:13px; color:var(--accent); }
   #hud .task { color:var(--muted); } #hud .task.next { color:var(--text); font-weight:600; }
@@ -34,7 +34,7 @@
   <form id="joinForm">
     <h1>Doppelganger Crowd</h1>
     <p>You are one face in a crowd of identical doppels. Do your errands. Act natural. Find the other humans by how they move.</p>
-    <p><b>Move:</b> WASD / arrows, or left-click a spot to walk there. <b>Shift</b> = stroll.<br>
+    <p><b>Move:</b> WASD / arrows (relative to the screen), or left-click a spot to walk there. <b>Shift</b> = stroll.<br>
        <b>Tag:</b> hover a figure and press <b>Space</b> or right-click (must be close).<br>
        Task +1 · full set +2 · catch a human +5 · wrong tag −1 and a 6s lockout.</p>
     <input id="name" maxlength="16" placeholder="Your name" autofocus required>

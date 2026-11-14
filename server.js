@@ -13,7 +13,7 @@ const server = http.createServer(app);
 const io = new Server(server);
 
 // ---------- Tunables ----------
-const W = 1200, H = 800;
+const W = 1000, H = 1000;   // square world, drawn as an isometric diamond
 const TICK_HZ = 20, DT = 1 / TICK_HZ;
 const NPC_COUNT = 40;
 const MAX_SPEED = 80;          // px/s, identical for everyone
@@ -27,13 +27,13 @@ const TASK_DWELL = 1.2;        // seconds standing at a station
 const TASKS_PER_SET = 3;
 
 const STATIONS = [
-  { name: 'Coffee',    x: 150,  y: 130, color: '#a0522d' },
-  { name: 'Fountain',  x: 600,  y: 400, color: '#3b82f6' },
-  { name: 'Kiosk',     x: 1050, y: 130, color: '#f59e0b' },
-  { name: 'Bench',     x: 150,  y: 670, color: '#22c55e' },
-  { name: 'Gate',      x: 1050, y: 670, color: '#a855f7' },
-  { name: 'Statue',    x: 600,  y: 110, color: '#94a3b8' },
-  { name: 'Food Cart', x: 600,  y: 690, color: '#ef4444' },
+  { name: 'Coffee',    x: 180, y: 180, color: '#d19a66' },
+  { name: 'Fountain',  x: 500, y: 500, color: '#61afef' },
+  { name: 'Kiosk',     x: 820, y: 180, color: '#e5c07b' },
+  { name: 'Bench',     x: 180, y: 820, color: '#98c379' },
+  { name: 'Gate',      x: 820, y: 820, color: '#c678dd' },
+  { name: 'Statue',    x: 500, y: 140, color: '#abb2bf' },
+  { name: 'Food Cart', x: 500, y: 860, color: '#e06c75' },
 ];
 const STATION_R = 38;
 
